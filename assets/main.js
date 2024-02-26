@@ -135,6 +135,9 @@ const FrameUnpacker = (() => {
             // wait for successful seek
             await waitForSeeked(videoElement);
 
+            // Clear the canvas before drawing the new frame!
+            context.clearRect(0, 0, width, height);
+
             // paint and extract out a frame for the timestamp
             const extractTimeStart = performance.now();
             context.drawImage(videoElement, 0, 0, width, height);
