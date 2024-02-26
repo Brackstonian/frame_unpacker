@@ -56,14 +56,14 @@ const FrameUnpacker = (() => {
         });
     };
 
-    const getCanvasJPEGBlob = async canvasElement => {
-        return new Promise(resolve => {
+    const getCanvasPNGBlob = async (canvasElement) => {
+        return new Promise((resolve) => {
             canvasElement.toBlob(
-                blob => {
+                (blob) => {
                     resolve(blob);
                 },
-                'image/jpeg',
-                0.85
+                'image/png',
+                1 // quality parameter doesn't apply to PNG
             );
         });
     };
@@ -76,11 +76,20 @@ const FrameUnpacker = (() => {
 
         const frames = [];
 
-        // load the video in a video element
+        // load the video video element
         const videoElement = document.createElement('video');
         videoElement.crossOrigin = 'Anonymous';
-        videoElement.src = videoUrl;
         videoElement.muted = true; // important for autoplay
+
+        // Create a source element and add video url
+        const sourceElement = document.createElement('source');
+        //TODO: ENSURE THAT UPLOADED VIDEO TPYE HAS CORRECT SOURCE.
+        sourceElement.type = 'video/webm';
+        sourceElement.src = videoUrl;
+
+        // Append the source element to the video element
+        videoElement.appendChild(sourceElement);
+
 
         // wait for it to be ready for processing
         // also keep a timeout, after which this will reject... say the video is not playable
@@ -113,6 +122,7 @@ const FrameUnpacker = (() => {
         canvasElement.width = width;
         canvasElement.height = height;
         const context = canvasElement.getContext('2d');
+        context.alpha = true; // Transparency support
 
         // metrics
         const frameExtractTimings = [];
@@ -129,7 +139,7 @@ const FrameUnpacker = (() => {
             const extractTimeStart = performance.now();
             context.drawImage(videoElement, 0, 0, width, height);
             //const imageData = context.getImageData(0, 0, width, height);
-            const imageDataBlob = await getCanvasJPEGBlob(canvasElement);
+            const imageDataBlob = await getCanvasPNGBlob(canvasElement);
             //const imageBitmap = await createImageBitmap(imageData);
             frameExtractTimings.push(performance.now() - extractTimeStart);
 
