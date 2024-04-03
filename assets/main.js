@@ -56,19 +56,20 @@ const FrameUnpacker = (() => {
         });
     };
 
-    const getCanvasPNGBlob = async (canvasElement) => {
+    const getCanvasWebPBlob = async (canvasElement, quality) => {
         return new Promise((resolve) => {
             canvasElement.toBlob(
                 (blob) => {
                     resolve(blob);
                 },
-                'image/png',
-                1 // quality parameter doesn't apply to PNG
+                'image/webp',
+                quality
             );
         });
     };
 
     const unpack = async options => {
+
         const videoUrl = options.url,
             by = options.by,
             count = options.count,
@@ -84,8 +85,12 @@ const FrameUnpacker = (() => {
         // Create a source element and add video url
         const sourceElement = document.createElement('source');
         //TODO: ENSURE THAT UPLOADED VIDEO TPYE HAS CORRECT SOURCE.
-        sourceElement.type = 'video/webm';
+        sourceElement.type = 'video/webm'; // This line suggests expected video format but doesn't enforce codec
         sourceElement.src = videoUrl;
+
+        // Append the source element to the video element
+        videoElement.appendChild(sourceElement);
+
 
         // Append the source element to the video element
         videoElement.appendChild(sourceElement);
@@ -142,7 +147,7 @@ const FrameUnpacker = (() => {
             const extractTimeStart = performance.now();
             context.drawImage(videoElement, 0, 0, width, height);
             //const imageData = context.getImageData(0, 0, width, height);
-            const imageDataBlob = await getCanvasPNGBlob(canvasElement);
+            const imageDataBlob = await getCanvasWebPBlob(canvasElement, options.quality);
             //const imageBitmap = await createImageBitmap(imageData);
             frameExtractTimings.push(performance.now() - extractTimeStart);
 
@@ -194,8 +199,9 @@ const FrameUnpacker = (() => {
         const fileElement = document.getElementById('video-file');
         const extractByElement = formElement.querySelector('#extract-by');
         const extractCountElement = formElement.querySelector('#extract-count');
+        const extractQualityElement = formElement.querySelector('#extract-quality');
 
-        if (!fileElement || !extractByElement || !extractCountElement) {
+        if (!fileElement || !extractByElement || !extractCountElement || !extractQualityElement) {
             throw new Error('Required input elements missing!');
         }
 
@@ -218,10 +224,13 @@ const FrameUnpacker = (() => {
             throw new Error('Invalid value in Step #3! Please provide correct value as instructed.');
         }
 
+        const extractQuality = Math.floor(parseInt(extractQualityElement.value, 10));
+
         return {
             videoFile: fileElement.files[0],
             extractBy: extractBy,
-            extractCount: extractCount
+            extractCount: extractCount,
+            extractQuality: extractQuality
         };
     };
 
@@ -251,6 +260,7 @@ const FrameUnpacker = (() => {
             url: videoDataURI,
             by: formData.extractBy,
             count: formData.extractCount,
+            quality: formData.extractQuality,
             progress: value => {
                 updateProgress(framesProgress, value);
             }
@@ -291,7 +301,7 @@ const FrameUnpacker = (() => {
 
             const frames = await extractFrames();
 
-            await zipAndDownload(frames, 'frame-{{id}}.png', 'to-extracted-frames');
+            await zipAndDownload(frames, 'frame-{{id}}.webp', 'extracted-frames-webp');
         } catch (err) {
             log(err);
         } finally {
