@@ -13,50 +13,104 @@
     <div id="content">
         <h1>Webm Video Frame Extract Tool</h1>
         <h6>
-            by <a href="#">Ethan Brackstone</a>
+            by <a href="https://brackstone.dev">Ethan Brackstone</a> - <a target="_blank" href="https://github.com/Brackstonian/frame_unpacker">Download github repo</a>
         </h6>
         <h6>
-            Credits: <a href="https://ghosh.dev">ghosh.dev</a>, <a href="https://github.com/Stuk/jszip" target="_blank">JSZip</a>, <a href="https://github.com/eligrey/FileSaver.js" target="_blank">FileSaver.js</a>
+            Credits: <a href="https://ghosh.dev">ghosh.dev</a>,
+            <a href="https://github.com/Stuk/jszip" target="_blank">JSZip</a>,
+            <a href="https://github.com/eligrey/FileSaver.js" target="_blank">FileSaver.js</a>
         </h6>
-        <h4>
-            Follow these steps:
-        </h4>
+        <h4>Follow these steps:</h4>
+
         <section>
             <form name="video-form" id="video-form" method="#" action="#">
+                <!-- Step 1 -->
                 <div class="form-row">
                     <label for="video-file">1. Choose a <strong>webm</strong> video file.</label>
                     <input type="file" id="video-file" accept=".webm" required />
                 </div>
+
+                <!-- Step 2 -->
                 <div class="form-row">
                     <label for="extract-by">2. Choose how to extract frames: by</label>
                     <select id="extract-by" required>
                         <option value="rate">frame rate</option>
+                        <!-- We can re-enable this if we want frame count logic -->
                         <option disabled value="count">frame count</option>
                     </select>
                 </div>
+
+                <!-- Step 3 -->
                 <div class="form-row">
                     <label for="extract-count">3. Enter the frame rate (between 1-60):</label>
-                    <input id="extract-count" type="number" min="1" max="3600" value="30" step="1" required />
+                    <input id="extract-count" type="number" min="1" max="60" value="30" step="1" required />
                 </div>
+
+                <!-- Step 4 -->
                 <div class="form-row">
-                    <label for="extract-quality">4. Enter the extract compression quality (between 0.01 - 1):</label>
+                    <label for="extract-quality">4. Enter the extract compression quality (0.01 - 1):</label>
                     <input id="extract-quality" type="number" min="0.01" max="1" value="1" step="0.01" required />
                 </div>
+
+                <!-- Step 5 - Dimension Handling -->
+                <div class="form-row">
+                    <label for="dimensions-source">5. Select Output Dimensions:</label>
+                    <select id="dimensions-source" required>
+                        <option value="original" selected>Original (videoWidth x videoHeight)</option>
+                        <option value="custom">Custom (exact width/height)</option>
+                        <option value="scale">Scale Factor</option>
+                        <option value="mobile">Mobile Preset (maintain aspect ratio)</option>
+                    </select>
+                </div>
+
+                <!-- If custom is chosen: -->
+                <div class="form-row" id="custom-dimensions-container" style="display: none;">
+                    <label>Enter custom width & height:</label>
+                    <input type="number" id="custom-width" placeholder="width" min="1" step="1" />
+                    <input type="number" id="custom-height" placeholder="height" min="1" step="1" />
+                </div>
+
+                <!-- If scale is chosen: -->
+                <div class="form-row" id="scale-container" style="display: none;">
+                    <label>Scale factor (0.01 -> 2.0):</label>
+                    <input type="number" id="scale-factor" placeholder="1.0" min="0.01" max="10" step="0.01" />
+                </div>
+
+                <!-- If mobile preset is chosen: -->
+                <div class="form-row" id="mobile-presets-container" style="display: none;">
+                    <label>Mobile widths:</label>
+                    <select id="mobile-width-preset">
+                        <option value="320">320 px wide</option>
+                        <option value="480">480 px wide</option>
+                        <option value="720">720 px wide</option>
+                        <option value="1080">1080 px wide</option>
+                    </select>
+                    <small>(Video is scaled down to fit this width if it's larger; aspect ratio is maintained.)</small>
+                </div>
+
+                <!-- Submit -->
                 <div class="form-row">
                     <input id="extract-submit" type="submit" value="Extract Frames and Download!" />
                 </div>
             </form>
         </section>
+
         <section>
             <progress id="frames-progress" value="0" max="100"></progress>
         </section>
+
         <section>
             <pre id="comments"></pre>
         </section>
+
         <section class="canvas-container" id="canvas-container"></section>
     </div>
+
+    <!-- JSZip and FileSaver -->
     <script src="node_modules/jszip/dist/jszip.min.js"></script>
     <script src="node_modules/filesaver.js/FileSaver.min.js"></script>
+
+    <!-- Main JS with dimension logic -->
     <script src="assets/main.js"></script>
 </body>
 

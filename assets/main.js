@@ -8,11 +8,10 @@ const log = text => {
     }
 };
 
-// Loading indicator
+// Loading indicator (optional utility)
 const startProgress = () => {
     document.documentElement.classList.add('cursor-loading');
 };
-
 const stopProgress = () => {
     document.documentElement.classList.remove('cursor-loading');
 };
@@ -28,7 +27,6 @@ const withTimeout = async (promise, timeout) => {
         setTimeout(() => {
             reject(`Promise ${promise} timed out at ${timeout}ms`);
         }, timeout);
-
         await promise;
         resolve(promise);
     });
@@ -41,7 +39,6 @@ const FrameUnpacker = (() => {
                 videoElement.removeEventListener('canplaythrough', handler);
                 resolve();
             };
-
             videoElement.addEventListener('canplaythrough', handler);
         });
     };
@@ -68,230 +65,304 @@ const FrameUnpacker = (() => {
         });
     };
 
-    const unpack = async options => {
-
-        const videoUrl = options.url,
-            by = options.by,
-            count = options.count,
-            progressHook = options.progress;
+    // This function unpacks frames from the video
+    const unpack = async (options) => {
+        const {
+            url,
+            by,
+            count,
+            progress,
+            quality,
+            dimensionSource,
+            customWidth,
+            customHeight,
+            scaleFactor,
+            mobileMaxWidth
+        } = options;
 
         const frames = [];
 
-        // load the video video element
+        // Create a video element & load source
         const videoElement = document.createElement('video');
         videoElement.crossOrigin = 'Anonymous';
-        videoElement.muted = true; // important for autoplay
+        videoElement.muted = true; // important for autoplay in some browsers
 
-        // Create a source element and add video url
         const sourceElement = document.createElement('source');
-        //TODO: ENSURE THAT UPLOADED VIDEO TPYE HAS CORRECT SOURCE.
-        sourceElement.type = 'video/webm'; // This line suggests expected video format but doesn't enforce codec
-        sourceElement.src = videoUrl;
-
-        // Append the source element to the video element
+        sourceElement.type = 'video/webm';
+        sourceElement.src = url;
         videoElement.appendChild(sourceElement);
 
-
-        // Append the source element to the video element
-        videoElement.appendChild(sourceElement);
-
-
-        // wait for it to be ready for processing
-        // also keep a timeout, after which this will reject... say the video is not playable
-        // given that we'll load a data URI here from the caller, 3sec is a large enough time
+        // Wait until canplaythrough (with 3s timeout)
         await withTimeout(waitForCanPlayThrough(videoElement), 3000);
 
-        // obtain basic parameters
+        // Basic video info
         const duration = videoElement.duration;
-        const width = videoElement.videoWidth;
-        const height = videoElement.videoHeight;
-        let timeStep, frameTotal;
+        const nativeWidth = videoElement.videoWidth;
+        const nativeHeight = videoElement.videoHeight;
 
-        // compute the time step based on extract by and extract count values
+        // Determine time stepping
+        let timeStep, frameTotal;
         if (by === 'rate') {
-            timeStep = 1 / count;
+            timeStep = 1 / count;  // e.g. if count=30 => every 1/30 = 0.0333s
             frameTotal = Infinity;
         } else if (by === 'count') {
+            // If you re-enable this logic
             timeStep = duration / count;
             frameTotal = count;
         } else {
-            throw new Error('Invalid extract by value: provide either "rate" or "count".');
+            throw new Error('Invalid extract-by mode');
         }
 
-        // seek to beginning and wait for it to be ready in that state
+        // Seek to 0
         videoElement.currentTime = 0;
         await waitForSeeked(videoElement);
 
-        // create an offscreen canvas to paint and extract frames from video timestamps
-        const canvasElement = document.createElement('canvas');
-        canvasElement.width = width;
-        canvasElement.height = height;
-        const context = canvasElement.getContext('2d');
-        context.alpha = true; // Transparency support
+        // Decide final output width & height
+        let outputWidth = nativeWidth;
+        let outputHeight = nativeHeight;
 
-        // metrics
+        if (dimensionSource === 'original') {
+            // Just use nativeWidth/nativeHeight
+            outputWidth = nativeWidth;
+            outputHeight = nativeHeight;
+        }
+        else if (dimensionSource === 'custom') {
+            // Use user-supplied custom dimensions
+            outputWidth = customWidth;
+            outputHeight = customHeight;
+        }
+        else if (dimensionSource === 'scale') {
+            // Scale factor approach
+            // e.g. factor=0.5 => half the size
+            outputWidth = Math.round(nativeWidth * scaleFactor);
+            outputHeight = Math.round(nativeHeight * scaleFactor);
+        }
+        else if (dimensionSource === 'mobile') {
+            // Mobile approach: scale down to 'mobileMaxWidth' if needed
+            // preserve aspect ratio
+            if (nativeWidth > mobileMaxWidth) {
+                const ratio = nativeHeight / nativeWidth;
+                outputWidth = mobileMaxWidth;
+                outputHeight = Math.round(mobileMaxWidth * ratio);
+            } else {
+                // If the original is already smaller, no scaling
+                outputWidth = nativeWidth;
+                outputHeight = nativeHeight;
+            }
+        }
+
+        // Create an offscreen canvas
+        const canvasElement = document.createElement('canvas');
+        canvasElement.width = outputWidth;
+        canvasElement.height = outputHeight;
+        const context = canvasElement.getContext('2d');
+
+        // We'll track timings to compute average frame extraction time
         const frameExtractTimings = [];
 
         let frameCount = 0;
         for (let step = 0; step <= duration && frameCount < frameTotal; step += timeStep) {
-            // progress video to desired timestamp
             videoElement.currentTime = step;
+            await waitForSeeked(videoElement); // ensure video is actually at that frame
 
-            // wait for successful seek
-            await waitForSeeked(videoElement);
+            context.clearRect(0, 0, outputWidth, outputHeight);
 
-            // Clear the canvas before drawing the new frame!
-            context.clearRect(0, 0, width, height);
+            const t0 = performance.now();
+            // Draw the current video frame into the canvas
+            context.drawImage(
+                videoElement,
+                0, 0, nativeWidth, nativeHeight, // source rect
+                0, 0, outputWidth, outputHeight  // destination rect
+            );
+            // Convert to blob
+            const imageDataBlob = await getCanvasWebPBlob(canvasElement, parseFloat(quality));
+            frameExtractTimings.push(performance.now() - t0);
 
-            // paint and extract out a frame for the timestamp
-            const extractTimeStart = performance.now();
-            context.drawImage(videoElement, 0, 0, width, height);
-            //const imageData = context.getImageData(0, 0, width, height);
-            const imageDataBlob = await getCanvasWebPBlob(canvasElement, options.quality);
-            //const imageBitmap = await createImageBitmap(imageData);
-            frameExtractTimings.push(performance.now() - extractTimeStart);
-
-            // and collect it in the list of our frames
             frames.push(imageDataBlob);
-
             frameCount++;
 
-            // update progress
-            progressHook(Math.ceil((step / duration) * 100));
+            // Update progress bar
+            progress(Math.ceil((step / duration) * 100));
         }
 
         return {
             frames: frames,
             meta: {
                 count: frames.length,
-                avgTime: average(frameExtractTimings)
+                avgTime: average(frameExtractTimings),
+                finalWidth: outputWidth,
+                finalHeight: outputHeight
             }
         };
     };
 
     return {
-        unpack: unpack
+        unpack
     };
 })();
 
 (async () => {
     const formElement = document.getElementById('video-form');
     const framesProgress = document.getElementById('frames-progress');
-    // framesProgress.style.visibility = 'none';
+
+    // Dimension UI elements
+    const dimensionsSelect = document.getElementById('dimensions-source');
+    const customDimensionsContainer = document.getElementById('custom-dimensions-container');
+    const scaleContainer = document.getElementById('scale-container');
+    const mobilePresetsContainer = document.getElementById('mobile-presets-container');
+
+    // Show/hide relevant dimension controls
+    dimensionsSelect.addEventListener('change', () => {
+        const choice = dimensionsSelect.value;
+        customDimensionsContainer.style.display = (choice === 'custom') ? 'block' : 'none';
+        scaleContainer.style.display = (choice === 'scale') ? 'block' : 'none';
+        mobilePresetsContainer.style.display = (choice === 'mobile') ? 'block' : 'none';
+    });
 
     const disableInput = () => {
         formElement.style.pointerEvents = 'none';
         formElement.style.opacity = 0.5;
-        // framesProgress.style.display = 'block';
     };
-
     const enableInput = () => {
         formElement.style.pointerEvents = '';
         formElement.style.opacity = 1;
-        // framesProgress.style.display = 'none';
     };
-
     const updateProgress = (progressElement, value) => {
         progressElement.value = value;
     };
 
+    // Gather & validate form data
     const getValidatedFormData = () => {
-        const fileElement = document.getElementById('video-file');
-        const extractByElement = formElement.querySelector('#extract-by');
-        const extractCountElement = formElement.querySelector('#extract-count');
-        const extractQualityElement = formElement.querySelector('#extract-quality');
+        const fileEl = document.getElementById('video-file');
+        const extractByEl = document.getElementById('extract-by');
+        const extractCountEl = document.getElementById('extract-count');
+        const extractQualityEl = document.getElementById('extract-quality');
 
-        if (!fileElement || !extractByElement || !extractCountElement || !extractQualityElement) {
-            throw new Error('Required input elements missing!');
+        if (!fileEl || !extractByEl || !extractCountEl || !extractQualityEl) {
+            throw new Error('Required input elements are missing!');
+        }
+        if (!fileEl.files || fileEl.files.length !== 1) {
+            throw new Error('No valid video file selected!');
         }
 
-        if (fileElement.files.length !== 1) {
-            throw new Error('Video input missing!');
+        // Validate "extract by" and "extract count"
+        const extractBy = extractByEl.value;
+        const extractCount = parseInt(extractCountEl.value, 10);
+        if (extractBy === 'rate') {
+            if (extractCount < 1 || extractCount > 60) {
+                throw new Error('Frame rate must be between 1 and 60.');
+            }
+        } else if (extractBy === 'count') {
+            // If you re-enable the “count” option,
+            // we might allow 1 -> 3600 frames, for example.
         }
 
-        const extractBy = extractByElement.value;
-        if (extractBy !== 'rate' && extractBy !== 'count') {
-            throw new Error('Invalid extract by mode! Please choose "frame rate" or "frame count".');
+        const extractQuality = parseFloat(extractQualityEl.value);
+        if (extractQuality < 0.01 || extractQuality > 1) {
+            throw new Error('Quality must be between 0.01 and 1.');
         }
 
-        const extractCount = Math.floor(parseInt(extractCountElement.value, 10));
-        if (
-            !(
-                (extractBy === 'rate' && extractCount >= 1 && extractCount <= 60) ||
-                (extractBy === 'count' && extractCount >= 1 && extractCount <= 3600)
-            )
-        ) {
-            throw new Error('Invalid value in Step #3! Please provide correct value as instructed.');
-        }
+        // Dimension logic
+        const dimensionSource = dimensionsSelect.value;
+        let customWidth = null, customHeight = null;
+        let scaleFactor = 1.0;
+        let mobileMaxWidth = 720; // default
 
-        const extractQuality = Math.floor(parseInt(extractQualityElement.value, 10));
+        if (dimensionSource === 'custom') {
+            const wEl = document.getElementById('custom-width');
+            const hEl = document.getElementById('custom-height');
+            customWidth = parseInt(wEl.value, 10);
+            customHeight = parseInt(hEl.value, 10);
+            if (isNaN(customWidth) || isNaN(customHeight) ||
+                customWidth < 1 || customHeight < 1) {
+                throw new Error('Custom width/height must be positive integers.');
+            }
+        }
+        else if (dimensionSource === 'scale') {
+            const sfEl = document.getElementById('scale-factor');
+            scaleFactor = parseFloat(sfEl.value);
+            if (isNaN(scaleFactor) || scaleFactor <= 0) {
+                throw new Error('Scale factor must be > 0.');
+            }
+        }
+        else if (dimensionSource === 'mobile') {
+            const mSelect = document.getElementById('mobile-width-preset');
+            mobileMaxWidth = parseInt(mSelect.value, 10);
+        }
 
         return {
-            videoFile: fileElement.files[0],
-            extractBy: extractBy,
-            extractCount: extractCount,
-            extractQuality: extractQuality
+            videoFile: fileEl.files[0],
+            extractBy,
+            extractCount,
+            extractQuality,
+            dimensionSource,
+            customWidth,
+            customHeight,
+            scaleFactor,
+            mobileMaxWidth
         };
     };
 
     const loadVideoFile = async file => {
         return new Promise(resolve => {
-            const fileReader = new FileReader();
-            fileReader.onloadend = e => {
+            const fr = new FileReader();
+            fr.onloadend = e => {
                 resolve(e.target.result);
             };
-            fileReader.readAsDataURL(file);
+            fr.readAsDataURL(file);
         });
     };
 
+    // Extract frames with the FrameUnpacker
     const extractFrames = async () => {
-        log(`\nValidating inputs...`);
-
+        log('Validating inputs...');
         const formData = getValidatedFormData();
 
         log(`Loading video...`);
+        const videoDataURI = await loadVideoFile(formData.videoFile);
 
-        const videoFile = formData.videoFile;
-        const videoDataURI = await loadVideoFile(videoFile);
-
-        log(`Extracting frames. This may take some time...`);
-
+        log('Extracting frames. This might take a while...');
         const unpacked = await FrameUnpacker.unpack({
             url: videoDataURI,
             by: formData.extractBy,
             count: formData.extractCount,
             quality: formData.extractQuality,
+            dimensionSource: formData.dimensionSource,
+            customWidth: formData.customWidth,
+            customHeight: formData.customHeight,
+            scaleFactor: formData.scaleFactor,
+            mobileMaxWidth: formData.mobileMaxWidth,
             progress: value => {
                 updateProgress(framesProgress, value);
             }
         });
 
         log(`Total frames extracted: ${unpacked.meta.count}`);
-        log(`Average extraction time per frame: ${unpacked.meta.avgTime}ms`);
+        log(`Average extraction time per frame: ${unpacked.meta.avgTime} ms`);
+        log(`Final frame dimension: ${unpacked.meta.finalWidth} x ${unpacked.meta.finalHeight}`);
 
         return unpacked.frames;
     };
 
+    // Zip and download frames as .webp
     const zipAndDownload = async (fileBlobs, fileNamePattern, zipFileName) => {
-        log(`Creating a zip file with frames. This may take some time. PLEASE WAIT...`);
-
+        log('Creating zip file with frames. Please wait...');
         const zip = new JSZip();
-
         const padCount = fileBlobs.length.toString().length;
 
-        fileBlobs.forEach((fileBlob, index) => {
-            zip.file(fileNamePattern.replace('{{id}}', (index + 1).toString().padStart(padCount, '0')), fileBlob);
+        fileBlobs.forEach((fileBlob, i) => {
+            const fileIndex = (i + 1).toString().padStart(padCount, '0');
+            zip.file(fileNamePattern.replace('{{id}}', fileIndex), fileBlob);
         });
 
-        zip.generateAsync({ type: 'blob' }).then(function (zipContent) {
-            log(`Triggering zip file download...`);
-
-            saveAs(zipContent, `${zipFileName}.zip`);
-
-            log(`Done!`);
+        zip.generateAsync({ type: 'blob' }).then(zipContent => {
+            log('Triggering zip download...');
+            saveAs(zipContent, zipFileName + '.zip');
+            log('Done!');
         });
     };
 
+    // Form submission
     formElement.addEventListener('submit', async e => {
         e.preventDefault();
 
@@ -300,8 +371,8 @@ const FrameUnpacker = (() => {
             updateProgress(framesProgress, 0);
 
             const frames = await extractFrames();
-
             await zipAndDownload(frames, 'frame-{{id}}.webp', 'extracted-frames-webp');
+
         } catch (err) {
             log(err);
         } finally {
